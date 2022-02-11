@@ -5,6 +5,9 @@ import * as rds from 'aws-cdk-lib/aws-rds';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecsPatterns from 'aws-cdk-lib/aws-ecs-patterns';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import { CfnListener } from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 
 export class CdkEdgeDBAuroraDemo extends Stack {
   constructor(scope: Construct, id: string, props: StackProps = {}) {
@@ -36,7 +39,7 @@ export class CdkEdgeDBAuroraDemo extends Stack {
         image: ecs.ContainerImage.fromRegistry("edgedb/edgedb"),
         containerPort: 5656,
         environment: {
-          /*EDGEDB_SERVER_HTTP_ENDPOINT_SECURITY: 'optional',*/
+          EDGEDB_SERVER_HTTP_ENDPOINT_SECURITY: 'optional',
           EDGEDB_SERVER_TLS_CERT_MODE: 'generate_self_signed',
           EDGEDB_SERVER_PASSWORD: "SuperS3cretPwd$", // Need to update to use Secrets Manager to auto-generate outside of code.
           EDGEDB_SERVER_BACKEND_DSN: `postgres://${cluster.secret?.secretValueFromJson('username')}:${cluster.secret?.secretValueFromJson('password')}@${cluster.clusterEndpoint.hostname}:${cluster.secret?.secretValueFromJson('port')}/${defaultDatabaseName}`,
@@ -47,10 +50,29 @@ export class CdkEdgeDBAuroraDemo extends Stack {
       healthCheckGracePeriod: Duration.minutes(2),
       minHealthyPercent: 100,
       maxHealthyPercent: 200,
-      listenerPort: 5656,
       assignPublicIp: true,
     });
+    const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'hosted-zone', {
+      zoneName: 'aaronbrighton.ca',
+      hostedZoneId: 'ZRZJWLXW3FS0K',
+    });
+    const certificate = new acm.DnsValidatedCertificate(this, 'tls-certificate', {
+      hostedZone: hostedZone,
+      domainName: 'edgedb.aaronbrighton.ca',
+    });
+
+    (loadBalancedFargateService.listener.node.defaultChild as CfnListener).port = 5656;
+    (loadBalancedFargateService.listener.node.defaultChild as CfnListener).protocol = 'TLS';
+    (loadBalancedFargateService.listener.node.defaultChild as CfnListener).sslPolicy = 'ELBSecurityPolicy-TLS13-1-2-2021-06';
+    (loadBalancedFargateService.listener.node.defaultChild as CfnListener).alpnPolicy = ['None'];
+    (loadBalancedFargateService.listener.node.defaultChild as CfnListener).certificates = [
+      {
+        certificateArn: certificate.certificateArn,
+      }
+    ];
     loadBalancedFargateService.service.connections.allowFromAnyIpv4(ec2.Port.tcp(5656));
+    (loadBalancedFargateService.targetGroup.node.defaultChild as elbv2.CfnTargetGroup).protocol = 'TLS';
+
     loadBalancedFargateService.targetGroup.configureHealthCheck({
       path: '/server/status/ready',
       interval: Duration.seconds(10),
@@ -59,7 +81,15 @@ export class CdkEdgeDBAuroraDemo extends Stack {
       protocol: elbv2.Protocol.HTTPS,
     });
     loadBalancedFargateService.targetGroup.setAttribute('deregistration_delay.timeout_seconds', '10');
+    loadBalancedFargateService.targetGroup.setAttribute('preserve_client_ip.enabled', 'true');
     cluster.connections.allowDefaultPortFrom(loadBalancedFargateService.service);
+
+    new route53.CnameRecord(this, 'nlb-custom-dns', {
+      domainName: loadBalancedFargateService.loadBalancer.loadBalancerDnsName,
+      recordName: 'edgedb.aaronbrighton.ca',
+      zone: hostedZone,
+      ttl: Duration.minutes(1), 
+    })
 
     new CfnOutput(this, 'edgedb-endpoint', {
       value: loadBalancedFargateService.loadBalancer.loadBalancerDnsName,
