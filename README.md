@@ -103,7 +103,7 @@ curl https://w83keja7je.execute-api.us-east-1.amazonaws.com
 [{"count":4}]%
 ```
 
-#### 5. Tearing it all down
+#### 6. Tearing it all down
 
 ```
 yarn destroy
