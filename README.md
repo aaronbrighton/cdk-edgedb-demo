@@ -8,7 +8,7 @@ This CDK app leverages [cdk-edgedb](https://github.com/aaronbrighton/cdk-edgedb)
 
 ![EdgeDB Demo Service Architecture](docs/cdk-edgedb-demo-architecture.png)
 
-### Underyling EdgeDB Infrastructure (deployed via cdk-edgedb)
+### Underlying EdgeDB Infrastructure (deployed via cdk-edgedb)
 
 ![EdgeDB Architecture](docs/cdk-edgedb-architecture.png)
 
